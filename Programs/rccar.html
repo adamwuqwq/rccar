@@ -1,0 +1,317 @@
+<!DOCTYPE html>
+<html lang="ja">
+<head>
+<meta charset="utf-8">
+<title>Control of an RC car</title>
+<meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=0;">
+<link rel="stylesheet" href="style.css" media="screen">
+<script type="text/javascript" src="/webiopi.js"></script>
+<script type="text/javascript">
+webiopi().ready(function() {
+
+  // settings for GPIO Ports
+  var PIN1 = 24; //for servo moter (PWM)
+  var PIN2 = 14; //for DC moter (direction of rotation)
+  var PIN3 = 15; //for DC moter (direction of rotation)
+  var PIN4 = 18; //for DC moter (PWM)
+  var PIN5 = 2; //for LED
+
+  var DCMOTOR_DUTY = 0;
+  var SVMOTOR_DUTY = 7.6;
+  var DCMODE = 0; //0 -> foward, 1 -> backward
+	var LEDMODE = 0; //led status. OFF(0) for default
+  var AUTODIS = 1; //
+  // automatically refresh distance each 0.1 seconds
+  setInterval(autorefresh, 100);
+
+  document.getElementById('show1').innerText = "速度->";
+  document.getElementById('show2').innerText = "角度->";
+  document.getElementById('show3').innerText = "LED->";
+  document.getElementById('show4').innerText = "距離->";
+  document.getElementById('ledcontrol').innerText = "-";
+
+  function autorefresh() {
+
+    showspeed();
+    showangle();
+    webiopi().callMacro( 'distance', [] , sensorcallback );
+  }
+
+  function sensorcallback( macro, args, data )
+  {
+    if(data<150){
+      if(data<25 && AUTODIS==1 && DCMODE == 0){
+        document.getElementById('obstaclestat').innerText = "回避!";
+        if(DCMOTOR_DUTY>30){
+          dcmotor_speed(-Math.round(DCMOTOR_DUTY*0.005+0.4)*10);
+        }
+        if(data<10){
+          document.getElementById('obstaclestat').innerText = "ブレーキ";
+          dcmotor_speed(0);
+        }
+      }
+      else document.getElementById('obstaclestat').innerText = Math.round(data) + "cm";
+    }
+    else{
+      document.getElementById('obstaclestat').innerText = "無限遠";
+    }
+  }
+
+  function ledcontrol() {
+    document.getElementById('show3').innerText = "LED->";
+    if(LEDMODE==1) {
+      document.getElementById('ledcontrol').innerText = "OFF";
+      LEDMODE = 0;
+      webiopi().callMacro( 'output_control', [PIN5,0] );
+    }
+    else{
+      document.getElementById('ledcontrol').innerText = "ON";
+      LEDMODE = 1;
+      webiopi().callMacro( 'output_control', [PIN5,1] );
+    }
+  }
+
+  //get current speed(1) or angle(0)
+  function showspeed() {
+    document.getElementById('show1').innerText = "速度->";
+    if(DCMODE==0){
+      document.getElementById('showspeed').innerText = "前 "+DCMOTOR_DUTY+"%";
+    }
+    else{
+      document.getElementById('showspeed').innerText = "後 "+DCMOTOR_DUTY+"%";
+    }
+  }
+  
+  function showangle() {
+    document.getElementById('show2').innerText = "角度->";
+    if(SVMOTOR_DUTY == 7.6) {
+      document.getElementById('showangle').innerText = "正 "+0+"%";
+    }
+    else if(SVMOTOR_DUTY > 7.6){ //left
+      document.getElementById('showangle').innerText = "左 "+Math.round((SVMOTOR_DUTY-7.6)/0.022)+"%";
+    }
+    else{
+      document.getElementById('showangle').innerText = "右 "+Math.round((7.6-SVMOTOR_DUTY)/0.022)+"%";
+    }
+  }
+
+  // 関数：方向を変える
+  function change_direction(mode) {
+    if(mode == "FOWARD") {    // 前進
+      dcmotor(0);
+    } else if(mode == "BACKWARD") {    // 後退
+      dcmotor(1);
+    } else if(mode == "RIGHT") {    // 右旋回
+      servomotor(PIN1, -1, 0.25);
+    } else if(mode == "LEFT") {    // 左旋回
+      servomotor(PIN1, 1, 0.25);
+    } else if(mode == "STRAIGHT") {    //直進 
+      servomotor(PIN1, 0, 0);
+    }
+  }
+
+  // 関数：前進か後退のために、DCを制御
+  function dcmotor(value) {
+    DCMODE = value;
+    if(value == 0){
+      //前進				    
+      webiopi().callMacro( 'output_control', [PIN2,1] );
+      webiopi().callMacro( 'output_control', [PIN3,0] );
+    }else{
+      //後退				    
+      webiopi().callMacro( 'output_control', [PIN2,0] );
+      webiopi().callMacro( 'output_control', [PIN3,1] );
+    }				    
+  }
+				    
+  // 関数：左折か右折のために、servoを制御
+  function servomotor(pin, left, value) {
+    if(left == -1){
+      //right				    
+      SVMOTOR_DUTY = SVMOTOR_DUTY - value;
+      if(SVMOTOR_DUTY < 5.4){				    
+        webiopi().callMacro( 'servo_duty', 5.4 );
+        SVMOTOR_DUTY = 5.4		
+      }else{
+        webiopi().callMacro( 'servo_duty', SVMOTOR_DUTY );
+      }
+    }else if(left == 1){
+      //left
+      SVMOTOR_DUTY = SVMOTOR_DUTY + value;
+      if(SVMOTOR_DUTY > 9.8){
+        webiopi().callMacro( 'servo_duty', 9.8 );
+        SVMOTOR_DUTY = 9.8
+      }else{				    
+        webiopi().callMacro( 'servo_duty', SVMOTOR_DUTY );
+      }
+    }else{
+      //straight
+      SVMOTOR_DUTY = 7.6
+      webiopi().callMacro( 'servo_duty', SVMOTOR_DUTY );
+    }
+  }	
+				    
+  // 関数：スピードの変更
+  function change_speed(mode) {
+    if(mode == "UP") {
+      //加速				    
+      dcmotor_speed(10);
+    }else if(mode == "DOWN") {
+      //減速
+      dcmotor_speed(-10);
+    }else if(mode == "STOP") {
+      //停止				    
+      dcmotor_speed(0);
+    }				    
+  }
+
+  // 関数：加減速のために、DCを制御
+  function dcmotor_speed(value) {
+    if(value == 0){
+      DCMOTOR_DUTY = value;
+      webiopi().callMacro( 'dc_duty', value );    
+    }else{
+       DCMOTOR_DUTY = DCMOTOR_DUTY + value;
+       if(DCMOTOR_DUTY > 100){
+         DCMOTOR_DUTY = 100;
+       }else if(DCMOTOR_DUTY < 0){
+	       if(DCMODE == 0){
+           change_direction('BACKWARD');
+         }else{
+           change_direction('FOWARD');
+         }
+         DCMOTOR_DUTY = 0;
+       }
+       webiopi().callMacro( 'dc_duty', DCMOTOR_DUTY ); 			
+    }
+  }
+			      			       
+
+  // 「前進」ボタンが押されたときのイベント処理
+  $('#forward').click(function(event) {
+    change_direction('FOWARD');
+    showspeed();
+  });
+
+  // 「後退」ボタンが押されたときのイベント処理
+  $('#backward').click(function(event) {
+    change_direction('BACKWARD');
+    showspeed();
+  });
+
+  // 「右」ボタンが押されたときのイベント処理
+  $('#right').click(function(event) {
+    change_direction('RIGHT');
+    showangle();
+  });
+
+  // 「左」ボタンが押されたときのイベント処理
+  $('#left').click(function(event) {                        
+    change_direction('LEFT');
+    showangle();
+  });
+
+  // 「直進」ボタンが押されたときのイベント処理
+  $('#straight').click(function(event) {                        
+    change_direction('STRAIGHT');
+    showangle();
+  });
+
+  // 「加速」ボタンが押されたときのイベント処理
+  $('#speedup').click(function(event) {
+    change_speed('UP');
+    showspeed();
+  });
+
+  // 「減速」ボタンが押されたときのイベント処理
+  $('#speeddown').click(function(event) {
+    change_speed('DOWN');
+    showspeed();
+  });
+
+  // 「停止」ボタンが押されたときのイベント処理
+  $('#stop').click(function(event) {
+    change_speed('STOP');
+    showspeed();
+  });
+
+  $('#showangle').click(function(event) {
+    showangle();
+  });
+
+  $('#showspeed').click(function(event) {
+    showspeed();
+  });
+
+  $('#ledcontrol').click(function(event) {
+    ledcontrol();
+  });
+
+  $('#obstaclestat').click(function(event) {
+    autorefresh();
+  });
+  // メイン
+  //servomotor(PIN1, 1, 3);
+  //webiopi().callMacro( 'sleep');
+  //servomotor(PIN1, 0, 3);
+  //webiopi().callMacro( 'sleep');			     
+  //dcmotor(0);
+  //webiopi().callMacro( 'sleep');
+  //change_speed('UP');
+  //webiopi().callMacro( 'sleep');			    
+});
+</script>
+</head>
+<body>
+<div id="wrapper">
+
+<header>
+  <div class="header">
+    RC CAR by Adamwuqwq
+  </div>
+</header>
+<center>
+  <img src="http://192.168.11.33:8080/?action=stream" />
+</center>
+<div class="header">
+    
+</div>
+<nav>
+  <div class="nav-zero">
+    <ul>
+      <li id="show1" class="ledoff"><br/>速度-><br/></li>
+      <li id="showspeed" class="ledoff"><br/>-<br/></li>
+      <li id="show2" class="ledoff"><br/>角度-><br/></li>
+      <li id="showangle" class="ledoff"><br/>-<br/></li>
+    </ul>
+    <ul>
+      <li id="show3" class="ledoff"><br/>LED-><br/></li>
+      <li id="ledcontrol" class="ledoff"><br/>-<br/></li>
+      <li id="show4" class="ledoff"><br/>障碍物<br/></li>
+      <li id="obstaclestat" class="ledoff"><br/>-<br/></li>
+    </ul>
+    <ul>
+      <li class="wakunone"></li>
+      <li id="speedup" class="ledoff"><br/>加速<br/></li>
+      <li class="wakunone"></li>
+      <li id="forward" class="ledoff"><br/>前進<br/></li>
+    </ul>
+    <ul>
+      <li id="left" class="ledoff"><br/>左<br/></li>
+      <li id="straight" class="ledoff"><br/>直進<br/></li>
+      <li id="right" class="ledoff"><br/>右<br/></li>
+      <li id="backward" class="ledoff"><br/>後退<br/></li>
+    </ul>
+    <ul>
+      <li class="wakunone"></li>
+      <li id="speeddown" class="ledoff"><br/>減速<br/></li>
+      <li class="wakunone"></li>
+      <li id="stop" class="ledoff"><br/>停止<br/></li>
+    </ul>
+  </div>
+  <div class="clear"></div>
+</nav>
+
+</div>
+</body>
+</html>
